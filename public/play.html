@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#120e27">
+<title>SnapVote — Play</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <div class="topbar">
+    <a class="brand" href="/play"><span class="dot"></span>SnapVote</a>
+    <span class="pill" id="code-pill" hidden></span>
+    <span class="pill pink" id="me-pill" hidden></span>
+    <span class="spacer"></span>
+    <span id="conn" hidden></span>
+    <button class="btn ghost small" id="leave" type="button" hidden>Leave</button>
+  </div>
+  <div id="notice" class="banner" hidden></div>
+  <div class="layout">
+    <section id="stage" aria-live="polite"></section>
+    <aside id="side" hidden>
+      <div class="card sticky">
+        <h3>Scoreboard</h3>
+        <p class="faint" id="board-note" hidden>🤫 Scores are hidden until the ceremony.</p>
+        <ol class="board" id="board"></ol>
+      </div>
+    </aside>
+  </div>
+</main>
+<script src="/js/common.js"></script>
+<script src="/js/confetti.js"></script>
+<script src="/js/views.js"></script>
+<script src="/js/play.js"></script>
+</body>
+</html>

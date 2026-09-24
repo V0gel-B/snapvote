@@ -1,0 +1,28 @@
+{
+  "name": "snapvote",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Password-protected multiplayer photo party game (Kahoot-style) running free on Cloudflare Workers.",
+  "scripts": {
+    "deploy": "node scripts/deploy.mjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.137.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SITE_PASSWORD": {
+        "description": "The **player password**. Give it to everyone who plays; they enter it once per phone. At least 8 characters, e.g. `sunset-waffle-4821`."
+      },
+      "ADMIN_PASSWORD": {
+        "description": "The **admin password**, only for you. It's needed to host games, open the admin panel and download photos. At least 8 characters and **different** from the player password."
+      }
+    }
+  }
+}
