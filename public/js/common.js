@@ -132,9 +132,14 @@
 
   // ------------------------------------------------------------------ realtime
   /**
-   * Reconnecting WebSocket that delivers full state snapshots.
-   * Phones drop sockets whenever the camera app opens — this reconnects
-   * the moment the page is visible again and resyncs from the server.
+   * Live connection that delivers full state snapshots.
+   *  - Prefers a WebSocket (instant updates).
+   *  - Phones drop sockets whenever the camera app opens: reconnects as soon
+   *    as the page is visible again and resyncs from the server.
+   *  - Some company Wi-Fi, VPNs and security filters block WebSockets. Then it
+   *    switches to HTTPS long-polling ("compatibility mode"), which works
+   *    through any network that can load web pages, and keeps quietly
+   *    re-trying the WebSocket in the background.
    */
   function connect(params, { onState, onStatus, onEnd, onError }) {
     let ws = null;
@@ -143,16 +148,29 @@
     let retryTimer = null;
     let pingTimer = null;
     let failures = 0;
+    let everOpened = false;
+    let polling = false;
+    let pollVersion = null;
+    let pollLoopId = 0;
+    const auth = { role: params.role, pid: params.pid, token: params.token };
 
     const url = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${new URLSearchParams(params)}`;
+    const deliver = (m) => {
+      if (typeof m.now === 'number') clockOffset = m.now - Date.now();
+      if (typeof m.v === 'string') pollVersion = m.v;
+      onState(m.s);
+    };
+    const end = (code) => { stopped = true; polling = false; clearTimeout(retryTimer); clearInterval(pingTimer); onStatus?.('ended'); onEnd?.(code); };
 
     function open() {
       if (stopped) return;
       clearTimeout(retryTimer);
-      onStatus?.('connecting');
-      ws = new WebSocket(url());
+      if (!polling) onStatus?.('connecting');
+      try { ws = new WebSocket(url()); }
+      catch { ws = null; failures += 1; startPolling(); return; }
       ws.onopen = () => {
-        attempt = 0; failures = 0;
+        everOpened = true; attempt = 0; failures = 0;
+        stopPolling();
         onStatus?.('online');
         ws.send(JSON.stringify({ t: 'sync' }));
         clearInterval(pingTimer);
@@ -162,25 +180,23 @@
         if (ev.data === 'pong') return;
         let m;
         try { m = JSON.parse(ev.data); } catch { return; }
-        if (m.t === 'state') {
-          if (typeof m.now === 'number') clockOffset = m.now - Date.now();
-          onState(m.s);
-        } else if (m.t === 'error') {
-          onError ? onError(m.message) : toast(m.message, 'error');
-        }
+        if (m.t === 'state') deliver(m);
+        else if (m.t === 'error') onError ? onError(m.message) : toast(m.message, 'error');
       };
       ws.onclose = async (ev) => {
         clearInterval(pingTimer);
         if (stopped) return;
-        if (ev.code === 4000 || ev.code === 4001) { stopped = true; onStatus?.('ended'); onEnd?.(ev.code, ev.reason); return; }
-        onStatus?.('offline');
+        if (ev.code === 4000 || ev.code === 4001) return end(ev.code);
         failures += 1;
-        if (failures === 3) {
-          // Maybe the password cookie expired, or the game is gone.
+        if (failures === 3 && !polling) {
+          // Maybe the password cookie expired.
           const res = await fetch('/api/session').catch(() => null);
           if (res && res.status === 401) return goToGate(params.role === 'host');
-          onEnd?.('unreachable');
         }
+        // WebSocket never worked (or keeps dying): use HTTPS long-polling.
+        if ((!everOpened && failures >= 2) || failures >= 4) startPolling();
+        if (polling) { retryTimer = setTimeout(open, 60000); return; } // quietly re-try the fast path
+        onStatus?.('offline');
         schedule();
       };
     }
@@ -189,24 +205,75 @@
       const delay = Math.min(8000, 500 * 2 ** attempt++) + Math.random() * 300;
       retryTimer = setTimeout(open, delay);
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && !stopped && (!ws || ws.readyState > 1)) { attempt = 0; open(); }
-    });
-    window.addEventListener('online', () => { if (!stopped && (!ws || ws.readyState > 1)) { attempt = 0; open(); } });
+
+    async function pollLoop(id) {
+      let backoff = 1000;
+      while (polling && !stopped && id === pollLoopId) {
+        try {
+          const res = await fetch(`/api/games/${encodeURIComponent(params.code)}/poll`, {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...auth, v: pollVersion }),
+          });
+          if (res.status === 401) return goToGate(params.role === 'host');
+          const m = await res.json();
+          if (!polling || id !== pollLoopId) return; // the WebSocket came back meanwhile
+          if (m.ended) return end(m.ended);
+          if (m.ok) { deliver(m); onStatus?.('polling'); backoff = 1000; continue; }
+          throw new Error(m.error || 'poll failed');
+        } catch {
+          if (!polling || id !== pollLoopId) return;
+          onStatus?.('offline');
+          await new Promise((r) => setTimeout(r, backoff));
+          backoff = Math.min(8000, backoff * 2);
+        }
+      }
+    }
+    function startPolling() {
+      if (polling || stopped) return;
+      polling = true;
+      pollVersion = null;
+      pollLoop(++pollLoopId);
+    }
+    function stopPolling() { polling = false; pollLoopId++; }
+
+    async function sendHttp(msg) {
+      try {
+        const res = await fetch(`/api/games/${encodeURIComponent(params.code)}/action`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...auth, msg }),
+        });
+        const m = await res.json();
+        if (m.ended) return end(m.ended);
+        if (m.ok) deliver(m);
+        else onError ? onError(m.error) : toast(m.error || 'Something went wrong.', 'error');
+      } catch {
+        toast('No connection — try again in a second.', 'error');
+      }
+    }
+
+    const wake = () => {
+      if (stopped) return;
+      if (polling) { if (!ws || ws.readyState > 1) { attempt = 0; open(); } return; }
+      if (!ws || ws.readyState > 1) { attempt = 0; open(); }
+    };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
+    window.addEventListener('online', wake);
 
     open();
     return {
       send(msg) {
         if (ws && ws.readyState === 1) { ws.send(JSON.stringify(msg)); return true; }
+        if (polling) { sendHttp(msg); return true; }
         toast('Reconnecting… try again in a second.', 'error');
         return false;
       },
-      close() { stopped = true; clearInterval(pingTimer); clearTimeout(retryTimer); ws?.close(); },
+      close() { stopped = true; polling = false; clearInterval(pingTimer); clearTimeout(retryTimer); ws?.close(); },
+      get mode() { return polling ? 'polling' : 'websocket'; },
     };
   }
 
   function statusDot(state) {
-    const labels = { online: 'Live', connecting: 'Connecting…', offline: 'Reconnecting…', ended: 'Ended' };
+    const labels = { online: 'Live', polling: 'Live (compatibility mode)', connecting: 'Connecting…', offline: 'Reconnecting…', ended: 'Ended' };
     const el = $('#conn');
     if (!el) return;
     el.dataset.state = state;

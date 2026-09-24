@@ -167,6 +167,19 @@ export default {
         return result.ok ? json(result) : json({ error: result.error }, 400);
       }
 
+      // HTTP fallback for networks that block WebSockets (some company Wi-Fi, VPNs, filters).
+      const fallback = path.match(/^\/api\/games\/([A-Za-z0-9]{5})\/(poll|action)$/);
+      if (fallback && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const auth = { role: body.role === 'host' ? 'host' : 'player', pid: String(body.pid || ''), token: String(body.token || '') };
+        if (auth.role === 'host' && !session.admin) return json({ error: 'This needs the admin password.' }, 403);
+        const code = fallback[1].toUpperCase();
+        const result = fallback[2] === 'poll'
+          ? await hub(env).pollState(code, auth, typeof body.v === 'string' ? body.v : null)
+          : await hub(env).httpAction(code, auth, body.msg);
+        return json(result, result.ok || result.ended ? 200 : 400);
+      }
+
       const submit = path.match(/^\/api\/games\/([A-Za-z0-9]{5})\/photo$/);
       if (submit && request.method === 'POST') {
         const length = Number(request.headers.get('Content-Length') || 0);

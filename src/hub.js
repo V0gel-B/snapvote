@@ -8,6 +8,8 @@ import {
 const STORAGE_SOFT_LIMIT = 4.5 * 1024 ** 3;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 10;
+const POLL_ONLINE_MS = 35000; // a long-poll is held up to 25 s
+const POLL_HOLD_MS = 25000;
 
 /**
  * One Durable Object ("the hub") owns every game:
@@ -23,6 +25,9 @@ export class SnapVoteHub extends DurableObject {
     this.sql = ctx.storage.sql;
     this.loginFailures = new Map();
     this.msgBudget = new WeakMap();
+    this.pollSeen = new Map(); // "code|pid" -> last poll time (HTTP fallback clients)
+    this.versions = new Map(); // code -> state version, bumped on every change
+    this.waiters = new Map(); // code -> Set of held long-poll requests
     this.migrate();
     // Keep-alive pings are answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -97,6 +102,13 @@ export class SnapVoteHub extends DurableObject {
     for (const ws of this.sockets(code)) {
       const a = ws.deserializeAttachment();
       if (a?.role === 'player') ids.add(a.pid);
+    }
+    // Players on networks that block WebSockets poll over plain HTTPS instead.
+    const cutoff = Date.now() - POLL_ONLINE_MS;
+    for (const [key, at] of this.pollSeen) {
+      if (at < cutoff) { this.pollSeen.delete(key); continue; }
+      const [c, pid] = key.split('|');
+      if (c === code) ids.add(pid);
     }
     return ids;
   }
@@ -278,6 +290,7 @@ export class SnapVoteHub extends DurableObject {
     this.sql.exec('DELETE FROM votes WHERE game_code = ?', g.code);
     this.sql.exec('DELETE FROM players WHERE game_code = ?', g.code);
     this.sql.exec('DELETE FROM games WHERE code = ?', g.code);
+    this.releaseWaiters(g.code, null);
     this.rearm();
     return { deleted: true };
   }
@@ -322,13 +335,99 @@ export class SnapVoteHub extends DurableObject {
       ws.send(JSON.stringify({ t: 'state', now: Date.now(), s: this.viewFor(g, this.sharedView(g), a) }));
       return;
     }
+    const error = this.handleMessage(g, a, msg);
+    if (error) ws.send(JSON.stringify({ t: 'error', message: error }));
+  }
+
+  /** Same actions for WebSocket and HTTP-fallback clients. Returns an error message or null. */
+  handleMessage(g, viewer, msg) {
     try {
-      if (a.role === 'host') this.onHostMessage(g, msg);
-      else this.onPlayerMessage(g, a.pid, msg);
+      if (viewer.role === 'host') this.onHostMessage(g, msg);
+      else this.onPlayerMessage(g, viewer.pid, msg);
+      return null;
     } catch (err) {
-      ws.send(JSON.stringify({ t: 'error', message: err instanceof InputError ? err.message : 'Something went wrong.' }));
       if (!(err instanceof InputError)) console.error(err);
+      return err instanceof InputError ? err.message : 'Something went wrong.';
     }
+  }
+
+  /** Who is calling over HTTP? Same checks as the WebSocket handshake. */
+  httpViewer(g, { role, pid, token }) {
+    if (role === 'host') return token && token === g.host_token ? { code: g.code, role: 'host' } : null;
+    const p = this.player(g.code, pid, token);
+    return p ? { code: g.code, role: 'player', pid: p.id } : null;
+  }
+
+  version(code) {
+    if (!this.versions.has(code)) this.versions.set(code, `${Date.now().toString(36)}.0`);
+    return this.versions.get(code);
+  }
+
+  bumpVersion(code) {
+    const [epoch, n] = this.version(code).split('.');
+    this.versions.set(code, `${epoch}.${Number(n) + 1}`);
+  }
+
+  pollResponse(g, viewer, shared) {
+    return { ok: true, v: this.version(g.code), now: Date.now(), s: this.viewFor(g, shared || this.sharedView(g), viewer) };
+  }
+
+  /**
+   * HTTP fallback for networks that block WebSockets. Long-poll: if the
+   * client already has the latest version, the request is held until the
+   * next change (or 25 s), so a quiet game costs ~2 requests per minute.
+   */
+  pollState(code, auth, since) {
+    const g = this.getGame(code);
+    if (!g) return { ok: false, ended: 4000 };
+    const viewer = this.httpViewer(g, auth || {});
+    if (!viewer) return { ok: false, ended: auth?.role === 'host' ? 4000 : 4001 };
+    if (viewer.role === 'player') {
+      const key = `${g.code}|${viewer.pid}`;
+      const wasOnline = (this.pollSeen.get(key) || 0) > Date.now() - POLL_ONLINE_MS;
+      this.pollSeen.set(key, Date.now());
+      if (!wasOnline) this.broadcast(g.code); // host sees the "online" dot light up
+    }
+    if (since !== this.version(g.code)) return this.pollResponse(g, viewer);
+    return new Promise((resolve) => {
+      if (!this.waiters.has(g.code)) this.waiters.set(g.code, new Set());
+      const set = this.waiters.get(g.code);
+      const w = {
+        viewer,
+        done: (response) => { clearTimeout(w.timer); set.delete(w); resolve(response); },
+      };
+      w.timer = setTimeout(() => {
+        const fresh = this.getGame(g.code);
+        if (viewer.role === 'player') this.pollSeen.set(`${g.code}|${viewer.pid}`, Date.now());
+        w.done(fresh ? this.pollResponse(fresh, viewer) : { ok: false, ended: 4000 });
+      }, POLL_HOLD_MS);
+      set.add(w);
+    });
+  }
+
+  /** Release held long-polls for a game (after a change, or when it ends). */
+  releaseWaiters(code, g, shared) {
+    const set = this.waiters.get(code);
+    if (!set || set.size === 0) return;
+    const alive = g ? new Set(this.players(code).map((p) => p.id)) : null;
+    for (const w of [...set]) {
+      if (!g) w.done({ ok: false, ended: 4000 });
+      else if (w.viewer.role === 'player' && !alive.has(w.viewer.pid)) w.done({ ok: false, ended: 4001 });
+      else w.done(this.pollResponse(g, w.viewer, shared));
+    }
+  }
+
+  /** HTTP fallback: perform an action (start, vote, reveal, ...). */
+  httpAction(code, auth, msg) {
+    const g = this.getGame(code);
+    if (!g) return { ok: false, error: 'This game has ended.' };
+    const viewer = this.httpViewer(g, auth || {});
+    if (!viewer) return { ok: false, error: 'You are not part of this game any more.' };
+    if (!msg || typeof msg !== 'object' || JSON.stringify(msg).length > 4000) return { ok: false, error: 'Invalid request.' };
+    const error = this.handleMessage(g, viewer, msg);
+    if (error) return { ok: false, error };
+    const fresh = this.getGame(g.code);
+    return fresh ? this.pollResponse(fresh, viewer) : { ok: false, ended: 4000 };
   }
 
   async webSocketClose(ws, code, reason) {
@@ -545,15 +644,18 @@ export class SnapVoteHub extends DurableObject {
   // ------------------------------------------------------------ snapshots
 
   broadcast(code) {
+    this.bumpVersion(code);
     const sockets = this.sockets(code);
-    if (sockets.length === 0) return;
+    const waiting = this.waiters.get(code)?.size || 0;
+    if (sockets.length === 0 && waiting === 0) return;
     const g = this.getGame(code);
-    if (!g) return;
+    if (!g) { this.releaseWaiters(code, null); return; }
     const shared = this.sharedView(g);
     for (const ws of sockets) {
       const a = ws.deserializeAttachment();
       try { ws.send(JSON.stringify({ t: 'state', now: Date.now(), s: this.viewFor(g, shared, a) })); } catch {}
     }
+    this.releaseWaiters(code, g, shared);
   }
 
   sharedView(g) {

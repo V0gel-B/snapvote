@@ -35,6 +35,12 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log in.');
+      // Did the browser actually keep the login cookie? (Some managed or
+      // privacy-hardened browsers block cookies, which would loop back here.)
+      const check = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
+      if (check && check.status === 401) {
+        throw new Error('The password is right, but this browser didn’t keep the login. Cookies are probably blocked for this site. Allow cookies for it (in Chrome: click the icon left of the address → Site settings → Cookies → Allow), or try another browser.');
+      }
       location.replace(next);
     } catch (err) {
       $('error').textContent = err.message;

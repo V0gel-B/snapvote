@@ -53,7 +53,7 @@ img { max-width: 100%; }
 .spacer { flex: 1; }
 #conn { font-size: 0.78rem; font-weight: 700; color: var(--dim); display: inline-flex; align-items: center; gap: 6px; }
 #conn::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
-#conn[data-state='online']::before { background: var(--green); box-shadow: 0 0 8px var(--green); }
+#conn[data-state='online']::before, #conn[data-state='polling']::before { background: var(--green); box-shadow: 0 0 8px var(--green); }
 #conn[data-state='offline']::before, #conn[data-state='connecting']::before { background: var(--gold); animation: pulse 1s infinite alternate; }
 @keyframes pulse { to { opacity: 0.3; } }
 
