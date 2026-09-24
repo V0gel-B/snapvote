@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SnapVote — Host</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="host">
+<main class="wrap">
+  <div class="topbar">
+    <a class="brand" href="/host"><span class="dot"></span>SnapVote <small>host</small></a>
+    <span class="pill" id="code-pill" hidden></span>
+    <span class="spacer"></span>
+    <span id="conn" hidden></span>
+    <a class="btn ghost small" href="/admin">Admin panel</a>
+  </div>
+  <div class="layout" id="layout">
+    <section id="stage" aria-live="polite"></section>
+    <aside id="side" hidden>
+      <div class="card sticky">
+        <div id="side-join" class="center" hidden></div>
+        <h3>Scoreboard</h3>
+        <p class="faint" id="board-note" hidden>🤫 Hidden from players until the ceremony.</p>
+        <ol class="board" id="board"></ol>
+      </div>
+    </aside>
+  </div>
+</main>
+<script src="/vendor/qrcode.js"></script>
+<script src="/vendor/fflate.min.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/confetti.js"></script>
+<script src="/js/views.js"></script>
+<script src="/js/host.js"></script>
+</body>
+</html>

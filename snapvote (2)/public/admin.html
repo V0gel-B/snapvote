@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SnapVote — Admin</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main class="wrap" style="max-width:980px">
+  <div class="topbar">
+    <a class="brand" href="/admin"><span class="dot"></span>SnapVote <small>admin</small></a>
+    <span class="spacer"></span>
+    <a class="btn small" href="/host">Host a game</a>
+    <a class="btn ghost small" href="/api/logout">Log out</a>
+  </div>
+  <div class="card">
+    <div class="row between"><h2 style="margin:0">Storage</h2><span class="muted" id="storage-text">…</span></div>
+    <div class="meter"><span id="storage-bar" style="width:0"></span></div>
+    <p class="faint" style="margin:0">Free plan: 5 GB. Photos are stored compressed (~150–500 KB each), so that's roughly 10,000+ photos. Download and delete old games to free space.</p>
+  </div>
+  <div class="row between" style="margin:8px 0 12px"><h2 style="margin:0">Games</h2><button class="btn small" id="refresh" type="button">Refresh</button></div>
+  <div id="games"><p class="muted">Loading…</p></div>
+</main>
+<script src="/vendor/fflate.min.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>

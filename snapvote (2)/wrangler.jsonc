@@ -1,0 +1,34 @@
+{
+  // SnapVote on Cloudflare Workers (free plan).
+  // Deploy with the double-click script in this folder, or `npm run deploy`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "snapvote",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // Static frontend. The Worker runs first on every request so it can
+  // enforce the password gate before serving any page.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+
+  // One Durable Object holds every game: SQLite storage (photos, votes,
+  // scores), live WebSockets and the round timers. SQLite-backed Durable
+  // Objects are included in the Workers free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "HUB", "class_name": "SnapVoteHub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SnapVoteHub"] }],
+
+  "observability": { "enabled": true }
+
+  // Secrets (set automatically by scripts/deploy.mjs, never stored here):
+  //   SITE_PASSWORD  - shared with players
+  //   ADMIN_PASSWORD - only for you: hosting games + admin panel
+}

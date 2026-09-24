@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SnapVote</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main class="wrap narrow">
+  <div class="topbar"><span class="brand"><span class="dot"></span>SnapVote</span></div>
+  <div class="card">
+    <h1 id="title">Enter the password</h1>
+    <p id="subtitle">The host shared a password with you — you only need it once on this device.</p>
+    <div id="error" class="banner error" hidden></div>
+    <form id="form" novalidate>
+      <div class="field">
+        <label for="password" id="pw-label">Password</label>
+        <input type="password" id="password" autocomplete="current-password" required autofocus>
+      </div>
+      <button class="btn primary block big" type="submit" id="submit">Unlock →</button>
+    </form>
+    <p class="faint center" style="margin:14px 0 0" id="switch"></p>
+  </div>
+</main>
+<script src="/js/gate.js"></script>
+</body>
+</html>
